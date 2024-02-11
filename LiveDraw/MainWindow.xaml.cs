@@ -4,18 +4,21 @@ using System.Drawing;
 using System.Drawing.Imaging;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Ink;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using Brush = System.Windows.Media.Brush;
 using Point = System.Windows.Point;
+using Screen = System.Windows.Forms.Screen;
 
 namespace AntFu7.LiveDraw
 {
@@ -39,6 +42,16 @@ namespace AntFu7.LiveDraw
         private static readonly Duration Duration5 = (Duration)Application.Current.Resources["Duration5"];
         private static readonly Duration Duration7 = (Duration)Application.Current.Resources["Duration7"];
         private static readonly Duration Duration10 = (Duration)Application.Current.Resources["Duration10"];
+
+        [DllImport("user32.dll")]
+        private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
+
+        [DllImport("user32.dll")]
+        private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+
+        private IntPtr windowHandle;
+        private HwndSource source;
+
 
         /*#region Mouse Throught
 
@@ -98,10 +111,27 @@ namespace AntFu7.LiveDraw
             }
         }
 
+        protected override void OnContentRendered(EventArgs e)
+        {
+            base.OnContentRendered(e);
+
+            SetupHotkeys();
+        }
+
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Interoperability", "CA1416:Validate platform compatibility", Justification = "<Pending>")]
+        private void MainWindow_Loaded(object sender, RoutedEventArgs e)
+        {
+            AdjustWindowSize();
+            Microsoft.Win32.SystemEvents.DisplaySettingsChanged += (_, _) => AdjustWindowSize();
+        }
+
         private void Exit(object sender, EventArgs e)
         {
             if (IsUnsaved())
                 QuickSave("ExitingAutoSave_");
+
+            source.RemoveHook(HwndHook);
+            UnregisterHotKey(windowHandle, 1200);
 
             Application.Current.Shutdown(0);
         }
@@ -407,6 +437,22 @@ namespace AntFu7.LiveDraw
                 EraserButton.ToolTip = "Toggle eraser mode (E)";
                 EraseByPoint_Flag = (int)erase_mode.NONE;
             }
+        }
+
+        private void AdjustWindowSize()
+        {
+            var primaryArea = Screen.PrimaryScreen.WorkingArea;
+            var scaleRatio = Math.Max(
+                primaryArea.Width / SystemParameters.PrimaryScreenWidth,
+                primaryArea.Height / SystemParameters.PrimaryScreenHeight
+            );
+            Left = Screen.AllScreens.Min(s => s.WorkingArea.Left) / scaleRatio;
+            Top = Screen.AllScreens.Min(s => s.WorkingArea.Top) / scaleRatio;
+            Width = Screen.AllScreens.Max(s => s.WorkingArea.Right) / scaleRatio - Left;
+            Height = Screen.AllScreens.Max(s => s.WorkingArea.Bottom) / scaleRatio - Top;
+
+            Canvas.SetTop(Palette, (primaryArea.Top + primaryArea.Height / 2) / scaleRatio - Top - Palette.ActualHeight / 2);
+            Canvas.SetLeft(Palette, (primaryArea.Left + primaryArea.Width / 2) / scaleRatio - Left - Palette.ActualWidth / 2);
         }
         #endregion
 
@@ -861,6 +907,33 @@ namespace AntFu7.LiveDraw
                     SetBrushSize(_brushSizes[_brushIndex]);
                     break;
             }
+        }
+
+        private void SetupHotkeys()
+        {
+            windowHandle = new WindowInteropHelper(this).Handle;
+            source = HwndSource.FromHwnd(windowHandle);
+            source.AddHook(HwndHook);
+
+            RegisterHotKey(windowHandle, 2300, 0x0001 | 0x0004, 0x52); //ALT + SHIFT + R - Enable/disable hotkey when not focused
+        }
+
+        private IntPtr HwndHook(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+        {
+            const int WM_HOTKEY = 0x0312;
+            switch (msg)
+            {
+                case WM_HOTKEY:
+                    switch (wParam.ToInt32())
+                    {
+                        case 2300:
+                            SetEnable(!_enable);
+                            handled = true;
+                            break;
+                    }
+                    break;
+            }
+            return IntPtr.Zero;
         }
         #endregion
 
